@@ -48,12 +48,6 @@ Deploy `contracts/harvest_guard.py` through GenLayer Studio or the CLI. It has n
 
 See [deployment notes](docs/deployment.md) for consensus and escrow-safety details.
 
-## Application
+## Submission Scope
 
-`app/` is a Vite client wired to the live V2 contract. It reads lots with `readContract`, sends payable creation and evidence writes with `writeContract`, and lets any connected wallet trigger validator consensus.
-
-```powershell
-cd app
-npm install
-npm run dev
-```
+This repository intentionally contains a standalone Intelligent Contract primitive, not a frontend product. Builders can reuse the escrow, consensus, revision, dispute, and timeout mechanisms in their own marketplace, supply-chain, or procurement application. See [consensus design](docs/consensus.md).
