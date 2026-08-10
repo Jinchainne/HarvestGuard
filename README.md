@@ -47,3 +47,13 @@ Deploy `contracts/harvest_guard.py` through GenLayer Studio or the CLI. It has n
 - Legacy V1: [`0xDAd514CB7390d589644c4DC3feb42a77c88618aB`](https://explorer-bradbury.genlayer.com/address/0xDAd514CB7390d589644c4DC3feb42a77c88618aB)
 
 See [deployment notes](docs/deployment.md) for consensus and escrow-safety details.
+
+## Application
+
+`app/` is a Vite client wired to the live V2 contract. It reads lots with `readContract`, sends payable creation and evidence writes with `writeContract`, and lets any connected wallet trigger validator consensus.
+
+```powershell
+cd app
+npm install
+npm run dev
+```
