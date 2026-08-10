@@ -35,4 +35,10 @@ genvm-lint check contracts/harvest_guard.py
 
 Deploy `contracts/harvest_guard.py` through GenLayer Studio or the CLI. It has no constructor parameters. Begin on testnet with a small GEN amount and public, stable inspection URLs.
 
+## Live Deployment
+
+- Network: GenLayer Bradbury Testnet (chain ID `4221`)
+- Contract: [`0xDAd514CB7390d589644c4DC3feb42a77c88618aB`](https://explorer-bradbury.genlayer.com/address/0xDAd514CB7390d589644c4DC3feb42a77c88618aB)
+- Deploy transaction: [`0xe8a2f695e9fd2b02f356865e6549879dc90ce723c03fa7597d03d0fc47574ac4`](https://explorer-bradbury.genlayer.com/tx/0xe8a2f695e9fd2b02f356865e6549879dc90ce723c03fa7597d03d0fc47574ac4)
+
 See [deployment notes](docs/deployment.md) for consensus and escrow-safety details.
