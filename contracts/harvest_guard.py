@@ -8,13 +8,16 @@ import json
 
 MAX_EVIDENCE_URLS = 8
 MAX_EVIDENCE_CHARS = 14000
+DEFAULT_MAX_REVISIONS = 3
+ARBITER_GRACE_SECONDS = 3 * 24 * 60 * 60
 
 
 class LotStatus:
     FUNDED = "funded"
     EVIDENCE_SUBMITTED = "evidence_submitted"
-    ACCEPTED = "accepted"
-    REJECTED = "rejected"
+    NEEDS_REVISION = "needs_revision"
+    REJECTED_FINAL = "rejected_final"
+    DISPUTED = "disputed"
     PAID = "paid"
     REFUNDED = "refunded"
 
@@ -34,6 +37,7 @@ class ProduceLot:
     id: u256
     buyer: Address
     producer: Address
+    arbiter: Address
     amount: u256
     product_spec: str
     inspection_criteria: str
@@ -42,6 +46,12 @@ class ProduceLot:
     verdict: str
     reasoning: str
     deadline: u256
+    revision_count: u256
+    max_revisions: u256
+    disputed_by: Address
+    dispute_reason: str
+    submitted_at: u256
+    resolved_at: u256
     settled: bool
 
 
@@ -83,6 +93,7 @@ class HarvestGuard(gl.Contract):
         lot.amount = u256(0)
         lot.settled = True
         lot.status = status
+        lot.resolved_at = self._now()
         self._save(lot)
         self._transfer(recipient, amount)
 
@@ -114,29 +125,32 @@ INSPECTION CRITERIA:
 LIVE EVIDENCE:
 {evidence}
 
-Return strict JSON only: {{"approved": true or false, "reasoning": "short evidence-based explanation"}}"""
+Return strict JSON only: {{"verdict": "APPROVED" or "NEEDS_REVISION" or "REJECTED", "reasoning": "short evidence-based explanation"}}"""
             return gl.nondet.exec_prompt(prompt, response_format="json")
 
         raw = gl.eq_principle.prompt_comparative(
             assess,
             principle=(
-                "The `approved` boolean must be identical across validators. "
+                "The `verdict` string must be identical across validators. "
                 "Reasoning may differ in wording but must support the same quality conclusion."
             ),
         )
         if isinstance(raw, str):
-            raw = json.loads(raw[raw.find("{"):raw.rfind("}") + 1])
+            try:
+                raw = json.loads(raw[raw.find("{"):raw.rfind("}") + 1])
+            except Exception:
+                raw = {"verdict": "NEEDS_REVISION", "reasoning": "AI response was not valid JSON"}
         if not isinstance(raw, dict):
             raise gl.vm.UserError("AI review returned an invalid result")
-        approved = raw.get("approved", False)
-        if isinstance(approved, str):
-            approved = approved.strip().lower() in ("true", "yes", "1")
+        verdict = str(raw.get("verdict", "NEEDS_REVISION")).strip().upper()
+        if verdict not in ("APPROVED", "NEEDS_REVISION", "REJECTED"):
+            verdict = "NEEDS_REVISION"
         reasoning = str(raw.get("reasoning", "No reasoning supplied"))[:1500]
-        return {"approved": bool(approved), "reasoning": reasoning}
+        return {"verdict": verdict, "reasoning": reasoning}
 
     @gl.public.write.payable
     def create_lot(
-        self, producer: Address, product_spec: str, inspection_criteria: str, deadline: int
+        self, producer: Address, arbiter: Address, product_spec: str, inspection_criteria: str, deadline: int
     ) -> int:
         if gl.message.value <= 0:
             raise gl.vm.UserError("Escrow amount must be positive")
@@ -144,16 +158,21 @@ Return strict JSON only: {{"approved": true or false, "reasoning": "short eviden
             raise gl.vm.UserError("Product specification and inspection criteria are required")
         if Address(producer) == gl.message.sender_address:
             raise gl.vm.UserError("Buyer and producer must differ")
+        if Address(arbiter) == Address("0x0000000000000000000000000000000000000000"):
+            raise gl.vm.UserError("Arbiter cannot be the zero address")
         if u256(deadline) <= self._now():
             raise gl.vm.UserError("Deadline must be in the future")
 
         lot_id = self.next_lot_id
         self.next_lot_id = u256(self.next_lot_id + 1)
         self.lots[lot_id] = ProduceLot(
-            id=lot_id, buyer=gl.message.sender_address, producer=Address(producer),
+            id=lot_id, buyer=gl.message.sender_address, producer=Address(producer), arbiter=Address(arbiter),
             amount=gl.message.value, product_spec=product_spec.strip(),
             inspection_criteria=inspection_criteria.strip(), evidence_urls=[],
-            status=LotStatus.FUNDED, verdict="", reasoning="", deadline=u256(deadline), settled=False,
+            status=LotStatus.FUNDED, verdict="", reasoning="", deadline=u256(deadline),
+            revision_count=u256(0), max_revisions=u256(DEFAULT_MAX_REVISIONS),
+            disputed_by=Address("0x0000000000000000000000000000000000000000"),
+            dispute_reason="", submitted_at=u256(0), resolved_at=u256(0), settled=False,
         )
         self.all_lot_ids.append(lot_id)
         return int(lot_id)
@@ -163,7 +182,7 @@ Return strict JSON only: {{"approved": true or false, "reasoning": "short eviden
         lot = self._get_lot(lot_id)
         if gl.message.sender_address != lot.producer:
             raise gl.vm.UserError("Only the producer may submit evidence")
-        if lot.status not in (LotStatus.FUNDED, LotStatus.REJECTED):
+        if lot.status not in (LotStatus.FUNDED, LotStatus.NEEDS_REVISION):
             raise gl.vm.UserError("Lot is not accepting evidence")
         if self._now() > lot.deadline:
             raise gl.vm.UserError("Evidence deadline has passed")
@@ -175,6 +194,7 @@ Return strict JSON only: {{"approved": true or false, "reasoning": "short eviden
                 raise gl.vm.UserError("Evidence URLs cannot be empty")
             lot.evidence_urls.append(url.strip())
         lot.status = LotStatus.EVIDENCE_SUBMITTED
+        lot.submitted_at = self._now()
         self._save(lot)
 
     @gl.public.write
@@ -183,12 +203,16 @@ Return strict JSON only: {{"approved": true or false, "reasoning": "short eviden
         if lot.status != LotStatus.EVIDENCE_SUBMITTED:
             raise gl.vm.UserError("Lot has no evidence awaiting verification")
         verdict = self._review(lot.product_spec, lot.inspection_criteria, [url for url in lot.evidence_urls])
-        lot.verdict = "APPROVED" if verdict["approved"] else "REJECTED"
+        lot.verdict = verdict["verdict"]
         lot.reasoning = verdict["reasoning"]
-        if verdict["approved"]:
+        if verdict["verdict"] == "APPROVED":
             self._settle(lot, lot.producer, LotStatus.PAID)
+        elif verdict["verdict"] == "NEEDS_REVISION":
+            lot.revision_count = lot.revision_count + u256(1)
+            lot.status = LotStatus.NEEDS_REVISION if lot.revision_count < lot.max_revisions else LotStatus.REJECTED_FINAL
+            self._save(lot)
         else:
-            lot.status = LotStatus.REJECTED
+            lot.status = LotStatus.REJECTED_FINAL
             self._save(lot)
         return lot.verdict
 
@@ -197,31 +221,85 @@ Return strict JSON only: {{"approved": true or false, "reasoning": "short eviden
         lot = self._get_lot(lot_id)
         if gl.message.sender_address != lot.buyer:
             raise gl.vm.UserError("Only the buyer may reclaim a rejected lot")
-        if lot.status != LotStatus.REJECTED:
+        if lot.status != LotStatus.REJECTED_FINAL:
             raise gl.vm.UserError("Only rejected lots can be refunded")
         self._settle(lot, lot.buyer, LotStatus.REFUNDED)
+
+    @gl.public.write
+    def raise_dispute(self, lot_id: int, reason: str) -> None:
+        lot = self._get_lot(lot_id)
+        sender = gl.message.sender_address
+        if sender != lot.buyer and sender != lot.producer:
+            raise gl.vm.UserError("Only the buyer or producer may dispute")
+        if lot.status in (LotStatus.PAID, LotStatus.REFUNDED, LotStatus.DISPUTED):
+            raise gl.vm.UserError("Lot cannot be disputed in its current status")
+        if not reason.strip():
+            raise gl.vm.UserError("Dispute reason is required")
+        lot.disputed_by = sender
+        lot.dispute_reason = reason.strip()
+        lot.status = LotStatus.DISPUTED
+        self._save(lot)
+
+    @gl.public.write
+    def resolve_dispute(self, lot_id: int, verdict: str, resolution_note: str) -> None:
+        lot = self._get_lot(lot_id)
+        if gl.message.sender_address != lot.arbiter:
+            raise gl.vm.UserError("Only the designated arbiter may resolve")
+        if lot.status != LotStatus.DISPUTED:
+            raise gl.vm.UserError("Lot is not disputed")
+        choice = verdict.strip().upper()
+        if choice not in ("APPROVE", "REJECT"):
+            raise gl.vm.UserError("Verdict must be APPROVE or REJECT")
+        lot.verdict = "ARBITER_" + choice
+        lot.reasoning = resolution_note.strip()[:1500]
+        if choice == "APPROVE":
+            self._settle(lot, lot.producer, LotStatus.PAID)
+        else:
+            self._settle(lot, lot.buyer, LotStatus.REFUNDED)
 
     @gl.public.write
     def refund_expired_lot(self, lot_id: int) -> None:
         lot = self._get_lot(lot_id)
         if self._now() <= lot.deadline:
             raise gl.vm.UserError("Deadline has not passed")
-        if lot.status not in (LotStatus.FUNDED, LotStatus.EVIDENCE_SUBMITTED):
+        if lot.status not in (LotStatus.FUNDED, LotStatus.EVIDENCE_SUBMITTED, LotStatus.NEEDS_REVISION, LotStatus.REJECTED_FINAL):
             raise gl.vm.UserError("Lot cannot be expired from its current status")
+        self._settle(lot, lot.buyer, LotStatus.REFUNDED)
+
+    @gl.public.write
+    def force_default_resolution(self, lot_id: int) -> None:
+        lot = self._get_lot(lot_id)
+        if lot.status != LotStatus.DISPUTED or self._now() <= lot.deadline + u256(ARBITER_GRACE_SECONDS):
+            raise gl.vm.UserError("Dispute is still within the arbiter grace period")
+        lot.verdict = "ARBITER_TIMEOUT"
+        lot.reasoning = "Arbiter did not resolve before the grace period ended"
         self._settle(lot, lot.buyer, LotStatus.REFUNDED)
 
     @gl.public.view
     def get_lot(self, lot_id: int) -> dict:
         lot = self._get_lot(lot_id)
         return {
-            "id": int(lot.id), "buyer": lot.buyer, "producer": lot.producer,
+            "id": int(lot.id), "buyer": lot.buyer, "producer": lot.producer, "arbiter": lot.arbiter,
             "amount": int(lot.amount), "product_spec": lot.product_spec,
             "inspection_criteria": lot.inspection_criteria,
             "evidence_urls": [url for url in lot.evidence_urls], "status": lot.status,
             "verdict": lot.verdict, "reasoning": lot.reasoning,
-            "deadline": int(lot.deadline), "settled": lot.settled,
+            "deadline": int(lot.deadline), "revision_count": int(lot.revision_count),
+            "max_revisions": int(lot.max_revisions), "disputed_by": lot.disputed_by,
+            "dispute_reason": lot.dispute_reason, "submitted_at": int(lot.submitted_at),
+            "resolved_at": int(lot.resolved_at), "settled": lot.settled,
         }
 
     @gl.public.view
     def list_lot_ids(self) -> list[int]:
         return [int(lot_id) for lot_id in self.all_lot_ids]
+
+    @gl.public.view
+    def list_lot_ids_for(self, party: Address) -> list[int]:
+        party = Address(party)
+        result = []
+        for lot_id in self.all_lot_ids:
+            lot = self.lots[lot_id]
+            if lot.buyer == party or lot.producer == party or lot.arbiter == party:
+                result.append(int(lot_id))
+        return result

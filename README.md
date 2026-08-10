@@ -2,7 +2,7 @@
 
 An agricultural quality escrow Intelligent Contract for GenLayer.
 
-A buyer escrows GEN for a produce lot. The designated producer submits public inspection, traceability, certification, or delivery URLs. GenLayer validators fetch that live evidence and use the Equivalence Principle to reach consensus on whether the lot meets the buyer's quality criteria. An approved lot pays the producer; rejected or expired lots can be refunded to the buyer.
+A buyer escrows GEN for a produce lot and names an independent arbiter. The designated producer submits public inspection, traceability, certification, or delivery URLs. GenLayer validators fetch that live evidence and use the Equivalence Principle to reach consensus on whether the lot meets the buyer's quality criteria. The verdict can approve payment, request a revision, or reject the lot.
 
 ## Lifecycle
 
@@ -11,7 +11,9 @@ create_lot (buyer funds GEN)
   -> submit_inspection_evidence (producer)
   -> verify_quality (permissionless validator consensus)
      -> approved: producer paid
-     -> rejected: buyer refunds
+     -> needs revision: producer resubmits, up to three times
+     -> rejected: buyer refunds or either party disputes
+  -> disputed: arbiter approves/rejects, then timeout refunds buyer
   -> expired: buyer refunds
 ```
 
@@ -21,11 +23,13 @@ Source: `contracts/harvest_guard.py`
 
 | Method | Caller | Purpose |
 | --- | --- | --- |
-| `create_lot` | Buyer, payable | Defines quality criteria and funds escrow. |
+| `create_lot` | Buyer, payable | Names producer/arbiter, defines quality criteria, and funds escrow. |
 | `submit_inspection_evidence` | Producer | Submits one to eight public evidence URLs. |
 | `verify_quality` | Anyone | Runs live-web AI consensus and records the verdict. |
 | `refund_rejected_lot` | Buyer | Refunds a rejected lot. |
+| `raise_dispute` / `resolve_dispute` | Party / arbiter | Freezes a live lot and gives the named arbiter a binding resolution. |
 | `refund_expired_lot` | Anyone | Refunds an unresolved lot after its deadline. |
+| `force_default_resolution` | Anyone | Refunds a disputed lot after the arbiter grace period. |
 
 ## Verify and Deploy
 
