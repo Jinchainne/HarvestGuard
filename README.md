@@ -42,7 +42,8 @@ Deploy `contracts/harvest_guard.py` through GenLayer Studio or the CLI. It has n
 ## Live Deployment
 
 - Network: GenLayer Bradbury Testnet (chain ID `4221`)
-- Contract: [`0xDAd514CB7390d589644c4DC3feb42a77c88618aB`](https://explorer-bradbury.genlayer.com/address/0xDAd514CB7390d589644c4DC3feb42a77c88618aB)
-- Deploy transaction: [`0xe8a2f695e9fd2b02f356865e6549879dc90ce723c03fa7597d03d0fc47574ac4`](https://explorer-bradbury.genlayer.com/tx/0xe8a2f695e9fd2b02f356865e6549879dc90ce723c03fa7597d03d0fc47574ac4)
+- V2 contract: [`0x6Fe7B30A7235A9cb7d60087dB3bf01ed18fB3739`](https://explorer-bradbury.genlayer.com/address/0x6Fe7B30A7235A9cb7d60087dB3bf01ed18fB3739)
+- V2 deploy transaction: [`0xca185a15e0b1a3e7df211bc9f650f231e4f41195d3e5e285b6ae24fcf6479e58`](https://explorer-bradbury.genlayer.com/tx/0xca185a15e0b1a3e7df211bc9f650f231e4f41195d3e5e285b6ae24fcf6479e58)
+- Legacy V1: [`0xDAd514CB7390d589644c4DC3feb42a77c88618aB`](https://explorer-bradbury.genlayer.com/address/0xDAd514CB7390d589644c4DC3feb42a77c88618aB)
 
 See [deployment notes](docs/deployment.md) for consensus and escrow-safety details.
